@@ -14,11 +14,11 @@ class PatchEncoder(nn.Module):
         
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # x shape: (batch_size, seq_len, d_feat)
-        B, L, D = x.shape
+        batch_size, seq_len, in_features = x.shape
         # Reshape into patches
-        P = self.patch_size
-        num_patches = L // P
-        x = x.reshape(B, num_patches, P * D)
+        patch_size = self.patch_size
+        num_patches = seq_len // patch_size
+        x = x.reshape(batch_size, num_patches, patch_size * in_features)
         
         # Encode patches
         x = self.linear(x)
@@ -28,26 +28,38 @@ class PatchEncoder(nn.Module):
 class MarketGuidedAttention(nn.Module):
     def __init__(self, d_model: int, n_heads: int, dropout: float = 0.1):
         super().__init__()
-        self.mha = nn.MultiheadAttention(d_model, n_heads, dropout=dropout)
+        self.n_heads = n_heads
+        self.mha = nn.MultiheadAttention(d_model, n_heads, dropout=dropout, batch_first=True)
         self.norm = nn.LayerNorm(d_model)
         self.dropout = nn.Dropout(dropout)
         
     def forward(self, x: torch.Tensor, market_info: torch.Tensor) -> torch.Tensor:
-        # Use market info to guide attention
-        attn_mask = self._create_market_mask(x, market_info)
-        attended, _ = self.mha(x, x, x, attn_mask=attn_mask)
+        # x shape: (batch_size, seq_len, d_model)
+        # market_info shape: (batch_size, d_feat)
+        
+        # Create attention weights based on market info
+        attn_weights = self._create_market_weights(x, market_info)
+        
+        # Apply attention 
+        attended, _ = self.mha(x, x, x, attn_mask=None, key_padding_mask=None)
         attended = self.dropout(attended)
+        
+        # Apply market-based weighting
+        attended = attended * attn_weights.unsqueeze(-1)
+        
         return self.norm(x + attended)
     
-    def _create_market_mask(self, x: torch.Tensor, market_info: torch.Tensor) -> torch.Tensor:
-        # Create attention mask based on market conditions
+    def _create_market_weights(self, x: torch.Tensor, market_info: torch.Tensor) -> torch.Tensor:
+        # Create attention weights based on market conditions
         B, L, _ = x.shape
-        mask = torch.ones(B, L, L, device=x.device)
-        # Modify mask based on market_info
-        # This is a simplified version; you can make it more sophisticated
-        volatility = market_info[:, 0]  # Assume first feature is volatility
-        mask = mask * volatility.view(B, 1, 1)
-        return mask
+        
+        # Project market info to sequence length
+        market_weights = torch.sigmoid(market_info.mean(dim=-1))  # (batch_size,)
+        
+        # Expand to match sequence length
+        weights = market_weights.unsqueeze(1).expand(-1, L)  # (batch_size, seq_len)
+        
+        return weights
 
 class ParallelFusion(nn.Module):
     def __init__(self, config: dict):
@@ -64,7 +76,8 @@ class ParallelFusion(nn.Module):
                 d_model=self.d_model,
                 nhead=self.n_heads,
                 dim_feedforward=4*self.d_model,
-                dropout=0.1
+                dropout=0.1,
+                batch_first=True
             ),
             num_layers=3
         )

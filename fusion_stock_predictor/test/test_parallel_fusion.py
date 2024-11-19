@@ -1,11 +1,20 @@
 import torch
-from ..models.fusion_architectures.parallel_fusion import ParallelFusion
-from ..config.config import Config
-from ..data.processor import DataProcessor
+import sys
+import os
+from pathlib import Path
+
+# Add the project root to the Python path
+project_root = str(Path(__file__).parent.parent.parent)
+sys.path.append(project_root)
+
+from fusion_stock_predictor.models.fusion_architectures.parallel_fusion import ParallelFusion
+from fusion_stock_predictor.config.config import Config
+from fusion_stock_predictor.data.processor import DataProcessor
 
 def test_parallel_fusion():
     # Load config
-    config = Config('config/base_config.yaml').config
+    config_path = Path(__file__).parent.parent / 'config' / 'base_config.yaml'
+    config = Config(str(config_path)).config
     
     # Create model
     model = ParallelFusion(config)
