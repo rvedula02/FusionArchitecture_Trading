@@ -10,11 +10,11 @@ data:
 
 # Model Configuration
 model:
-  d_feat: 158  # Number of input features
+  d_feat: 110  # Number of input features
   d_model: 256  # Model dimension
-  patch_size: 10
-  stride: 5
   n_heads: 4
+  use_patches: false  # Set to true only if needed for computational efficiency
+  patch_size: 10  # Only used if use_patches is true
   dropout: 0.1
   n_layers: 3
 
