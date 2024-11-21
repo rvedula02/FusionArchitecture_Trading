@@ -96,12 +96,12 @@ class ParallelFusion(nn.Module):
                 nn.LayerNorm(self.d_model)
             )
         
-        # Fusion layer
+        # Fusion layer - now outputs one prediction per stock
         self.fusion_weights = nn.Parameter(torch.ones(2) / 2)
         self.fusion_layer = nn.Sequential(
             nn.Linear(2 * self.d_model, self.d_model),
             nn.ReLU(),
-            nn.Linear(self.d_model, 1)
+            nn.Linear(self.d_model, 5)  # 5 stocks
         )
     
     def forward(self, x: torch.Tensor, market_info: torch.Tensor) -> Tuple[torch.Tensor, Dict]:

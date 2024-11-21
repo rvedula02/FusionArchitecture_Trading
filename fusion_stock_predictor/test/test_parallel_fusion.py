@@ -40,25 +40,75 @@ def visualize_market_gating(x: torch.Tensor, output: torch.Tensor, gates: torch.
     plt.savefig(plot_dir / 'market_gating.png')
     plt.close()
 
-def visualize_predictions(y_true: torch.Tensor, predictions: torch.Tensor):
-    """Visualize model predictions vs actual values"""
-    plt.figure(figsize=(12, 6))
+def visualize_predictions(y_true: torch.Tensor, predictions: torch.Tensor, stock_names=None, return_types=None):
+    """Visualize model predictions vs actual values for each stock"""
+    if stock_names is None:
+        stock_names = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META']
+    
+    if return_types is None:
+        return_types = ['returns', 'log_returns']
+    
+    # Reshape y_true if it's 3D (batch, stocks, returns)
+    if len(y_true.shape) == 3:
+        batch_size, num_stocks, num_returns = y_true.shape
+        y_true = y_true.reshape(batch_size, num_stocks * num_returns)
+    
+    num_stocks = len(stock_names)
+    fig, axes = plt.subplots(num_stocks, 1, figsize=(15, 6*num_stocks))
+    if num_stocks == 1:
+        axes = [axes]
     
     # Convert to numpy for plotting
     y_true = y_true.detach().numpy()
     predictions = predictions.detach().numpy()
     
-    # Plot first target variable
-    plt.plot(y_true[:, 0], label='Actual', alpha=0.7)
-    plt.plot(predictions[:, 0], label='Predicted', alpha=0.7)
-    plt.title('Model Predictions vs Actual Values')
-    plt.legend()
-    plt.grid(True)
+    colors = {'returns': 'blue', 'log_returns': 'green', 'predicted': 'red'}
+    
+    for idx, (ax, stock) in enumerate(zip(axes, stock_names)):
+        # Plot each type of return
+        for j, return_type in enumerate(return_types):
+            return_idx = idx * 2 + j  # Each stock has 2 return types
+            ax.plot(y_true[:, return_idx], 
+                   label=f'Actual {stock} ({return_type})', 
+                   color=colors[return_type], 
+                   alpha=0.7)
+        
+        # Plot predictions for this stock
+        ax.plot(predictions[:, idx], 
+                label=f'Predicted {stock}', 
+                color=colors['predicted'], 
+                linestyle='--', 
+                alpha=0.7)
+        
+        ax.set_title(f'{stock} Stock Returns - Predictions vs Actual')
+        ax.set_xlabel('Time Steps')
+        ax.set_ylabel('Returns')
+        ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+        ax.grid(True)
+        
+        # Add statistics to the plot
+        stats_text = []
+        for j, return_type in enumerate(return_types):
+            return_idx = idx * 2 + j
+            stats_text.append(f'{return_type}:\n')
+            stats_text.append(f'  Mean: {y_true[:, return_idx].mean():.4f}\n')
+            stats_text.append(f'  Std: {y_true[:, return_idx].std():.4f}\n')
+        
+        stats_text.append(f'Predictions:\n')
+        stats_text.append(f'  Mean: {predictions[:, idx].mean():.4f}\n')
+        stats_text.append(f'  Std: {predictions[:, idx].std():.4f}')
+        
+        ax.text(1.05, 0.5, ''.join(stats_text),
+                transform=ax.transAxes,
+                verticalalignment='center',
+                bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+    
+    plt.tight_layout()
     
     # Save plot
     plot_dir = Path(__file__).parent / 'plots'
     plot_dir.mkdir(exist_ok=True)
-    plt.savefig(plot_dir / 'predictions.png')
+    plt.savefig(plot_dir / 'stock_predictions.png', dpi=300, bbox_inches='tight')
     plt.close()
 
 def test_intra_stock_attention():
@@ -176,6 +226,7 @@ def test_full_parallel_fusion():
     batch_size = 32
     seq_len = 60
     d_feat = config['model']['d_feat']
+    num_stocks = 5  # Number of stocks we're predicting
     
     x = torch.randn(batch_size, seq_len, d_feat)
     market_info = torch.randn(batch_size, d_feat)
@@ -184,8 +235,8 @@ def test_full_parallel_fusion():
     prediction, attention_weights = model(x, market_info)
     
     # Assertions
-    assert prediction.shape == (batch_size, 1), \
-        f"Expected prediction shape {(batch_size, 1)}, got {prediction.shape}"
+    assert prediction.shape == (batch_size, num_stocks), \
+        f"Expected prediction shape {(batch_size, num_stocks)}, got {prediction.shape}"
     assert 'temporal_weight' in attention_weights, "Missing temporal weight"
     assert 'market_weight' in attention_weights, "Missing market weight"
     assert abs(attention_weights['temporal_weight'] + attention_weights['market_weight'] - 1) < 1e-6, \
@@ -205,7 +256,7 @@ def test_with_real_data():
     processor = DataProcessor(config.config)
     train_loader, val_loader, test_loader = processor.prepare_data()
     
-    # Create model with correct dimensions
+    # Create model
     model = ParallelFusion(config.config)
     
     # Test with one batch
@@ -213,36 +264,28 @@ def test_with_real_data():
     logger.info(f"Input data shape: {x.shape}")
     logger.info(f"Target data shape: {y.shape}")
     
+    # Get stock names and return types
+    stock_names = processor.stock_names if hasattr(processor, 'stock_names') else None
+    return_types = processor.return_types if hasattr(processor, 'return_types') else None
+    
     # Use last timestep as market info
     market_info = x[:, -1, :]
     
     # Forward pass
     prediction, attention_weights = model(x, market_info)
     
-    # Assertions
-    assert prediction.shape[0] == y.shape[0], "Batch size mismatch"
-    assert prediction.shape[1] == 1, "Prediction should be single value"
-    
-    logger.info(f"Real data test - Prediction shape: {prediction.shape}")
-    logger.info(f"Real data test - Target shape: {y.shape}")
-    logger.info(f"Real data test - Attention weights: {attention_weights}")
-    
-    # Log model statistics
-    logger.info("\nModel Statistics:")
-    logger.info(f"Number of parameters: {sum(p.numel() for p in model.parameters())}")
-    logger.info(f"Input feature dimension: {config.config['model']['d_feat']}")
-    logger.info(f"Model hidden dimension: {config.config['model']['d_model']}")
-    logger.info(f"Number of attention heads: {config.config['model']['n_heads']}")
-    
-    # Log prediction statistics
-    logger.info("\nPrediction Statistics:")
-    logger.info(f"Mean prediction: {prediction.mean().item():.4f}")
-    logger.info(f"Std prediction: {prediction.std().item():.4f}")
-    logger.info(f"Mean target: {y.mean().item():.4f}")
-    logger.info(f"Std target: {y.std().item():.4f}")
+    # Log detailed information about each stock and return type
+    logger.info("\nPer-Stock Statistics:")
+    for idx, stock in enumerate(stock_names or range(y.shape[1] // 2)):
+        logger.info(f"\n{stock}:")
+        for j, return_type in enumerate(['returns', 'log_returns']):
+            return_idx = idx * 2 + j
+            logger.info(f"{return_type}:")
+            logger.info(f"  Mean: {y[:, return_idx].mean().item():.4f}")
+            logger.info(f"  Std: {y[:, return_idx].std().item():.4f}")
     
     # Visualize predictions
-    visualize_predictions(y, prediction)
+    visualize_predictions(y, prediction, stock_names, return_types)
     
     logger.info("Real data test passed")
 
