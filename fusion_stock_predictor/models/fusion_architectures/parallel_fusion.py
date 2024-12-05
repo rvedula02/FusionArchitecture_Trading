@@ -9,12 +9,12 @@ class IntraStockAttention(nn.Module):
     def __init__(self, d_feat: int, d_model: int, n_heads: int, dropout: float = 0.1):
         super().__init__()
         self.input_projection = nn.Linear(d_feat, d_model)
-        self.position_encoding = nn.Parameter(torch.randn(1, 1000, d_model))  # Max sequence length of 1000
+        self.position_encoding = nn.Parameter(torch.randn(1, 1000, d_model))  # check the sequence length here !!!!!! optimize this
         self.transformer = nn.TransformerEncoder(
             nn.TransformerEncoderLayer(
                 d_model=d_model,
                 nhead=n_heads,
-                dim_feedforward=4 * d_model,
+                dim_feedforward=4 * d_model, # why 4 times??
                 dropout=dropout,
                 batch_first=True
             ),
@@ -103,6 +103,14 @@ class ParallelFusion(nn.Module):
             nn.ReLU(),
             nn.Linear(self.d_model, 5)  # 5 stocks
         )
+        
+        # Add loss functions
+        self.returns_loss = nn.MSELoss()
+        self.direction_loss = nn.BCEWithLogitsLoss()
+        
+        # Prediction heads
+        self.returns_head = nn.Linear(self.d_model, 5)  # Return values
+        self.direction_head = nn.Linear(self.d_model, 5)  # Up/down prediction
     
     def forward(self, x: torch.Tensor, market_info: torch.Tensor) -> Tuple[torch.Tensor, Dict]:
         # Intra-stock temporal encoding
@@ -148,3 +156,15 @@ class ParallelFusion(nn.Module):
         }
         
         return prediction, attention_weights
+    
+    def compute_losses(self, predictions: torch.Tensor, targets: torch.Tensor) -> Dict:
+        returns_loss = self.returns_loss(predictions, targets)
+        direction_pred = torch.sign(predictions)
+        direction_true = torch.sign(targets)
+        direction_loss = self.direction_loss(direction_pred, direction_true)
+        
+        return {
+            'returns_loss': returns_loss,
+            'direction_loss': direction_loss,
+            'total_loss': returns_loss + 0.5 * direction_loss
+        }

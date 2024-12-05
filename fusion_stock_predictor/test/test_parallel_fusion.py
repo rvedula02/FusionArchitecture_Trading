@@ -14,30 +14,39 @@ from fusion_stock_predictor.models.fusion_architectures.parallel_fusion import (
 )
 from fusion_stock_predictor.config.config import Config
 from fusion_stock_predictor.data.processor import DataProcessor
+from fusion_stock_predictor.analysis.component_analysis import ComponentAnalysis
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 def visualize_market_gating(x: torch.Tensor, output: torch.Tensor, gates: torch.Tensor):
     """Visualize the effect of market gating"""
-    # Plot sample of original vs gated features
-    plt.figure(figsize=(12, 6))
+    plt.figure(figsize=(15, 8))
     
-    # Sample first sequence from batch
-    x_sample = x[0, :, 0].detach().numpy()  # First feature dimension
+    # Create subplots
+    plt.subplot(2, 1, 1)
+    x_sample = x[0, :, 0].detach().numpy()
     output_sample = output[0, :, 0].detach().numpy()
-    gates_sample = gates[0].mean().item()
+    gates_sample = gates[0].detach().numpy()
     
-    plt.plot(x_sample, label='Original', alpha=0.7)
-    plt.plot(output_sample, label=f'Gated (avg gate: {gates_sample:.3f})', alpha=0.7)
+    # Plot features
+    plt.plot(x_sample, label='Original Features', alpha=0.7)
+    plt.plot(output_sample, label='Gated Features', alpha=0.7)
     plt.title('Effect of Market Gating on Features')
     plt.legend()
     plt.grid(True)
     
-    # Save plot
-    plot_dir = Path(__file__).parent / 'plots'
-    plot_dir.mkdir(exist_ok=True)
-    plt.savefig(plot_dir / 'market_gating.png')
+    # Plot gate values
+    plt.subplot(2, 1, 2)
+    plt.plot(gates_sample, label='Gate Values', color='green')
+    plt.axhline(y=0.5, color='r', linestyle='--', label='Threshold')
+    plt.title('Market Gate Values')
+    plt.ylabel('Gate Strength')
+    plt.legend()
+    plt.grid(True)
+    
+    plt.tight_layout()
+    plt.savefig(Path(__file__).parent / 'plots' / 'market_gating.png')
     plt.close()
 
 def visualize_predictions(y_true: torch.Tensor, predictions: torch.Tensor, stock_names=None, return_types=None):
@@ -164,12 +173,15 @@ def test_market_gating():
     
     # Forward pass
     output = market_gate(x, market_info)
+    gates = market_gate.gate(market_gate.market_projection(market_info))
+    
+    # Visualize the gating effect
+    visualize_market_gating(x, output, gates)
     
     # Assertions
     assert output.shape == x.shape, f"Expected shape {x.shape}, got {output.shape}"
     
     # Check that gating values are between 0 and 1
-    gates = market_gate.gate(market_gate.market_projection(market_info))
     assert torch.all((gates >= 0) & (gates <= 1)), "Gate values should be between 0 and 1"
     
     # Check that the output is modified from the input
@@ -177,9 +189,6 @@ def test_market_gating():
     
     # Check that the gating operation preserves the sign of the input
     assert torch.all(torch.sign(output) == torch.sign(x)), "Gating should preserve sign of input"
-    
-    # Visualize the gating effect
-    visualize_market_gating(x, output, gates)
     
     logger.info("MarketGating test passed")
     logger.info(f"Average gate value: {gates.mean().item():.3f}")
@@ -213,6 +222,25 @@ def test_cross_time_attention():
     logger.info("CrossTimeAttention test passed")
     return output
 
+def analyze_model_components(model: ParallelFusion, x: torch.Tensor, market_info: torch.Tensor):
+    """Analyze model components behavior"""
+    analyzer = ComponentAnalysis(model)
+    
+    # Analyze attention patterns
+    attention_patterns = analyzer.analyze_attention_patterns(x)
+    logger.info("\nAttention Pattern Analysis:")
+    logger.info(f"  Mean temporal feature value: {attention_patterns['temporal_mean'].mean().item():.4f}")
+    logger.info(f"  Std of temporal features: {attention_patterns['temporal_std'].mean().item():.4f}")
+    
+    # Analyze market impact
+    market_impact = analyzer.analyze_market_impact(x, market_info)
+    logger.info("\nMarket Impact Analysis:")
+    logger.info(f"  Average gate strength: {market_impact['gate_mean']:.4f}")
+    logger.info(f"  Gate variation: {market_impact['gate_std']:.4f}")
+    logger.info(f"  Number of high-impact features: {market_impact['high_impact_features']}")
+    
+    return attention_patterns, market_impact
+
 def test_full_parallel_fusion():
     """Test the complete parallel fusion model"""
     # Load config
@@ -233,6 +261,15 @@ def test_full_parallel_fusion():
     
     # Forward pass
     prediction, attention_weights = model(x, market_info)
+    
+    # Test loss computation
+    dummy_targets = torch.randn_like(prediction)  # For testing
+    losses = model.compute_losses(prediction, dummy_targets)
+    
+    logger.info(f"Computed losses: {losses}")
+    
+    # Analyze components
+    attention_patterns, market_impact = analyze_model_components(model, x, market_info)
     
     # Assertions
     assert prediction.shape == (batch_size, num_stocks), \
