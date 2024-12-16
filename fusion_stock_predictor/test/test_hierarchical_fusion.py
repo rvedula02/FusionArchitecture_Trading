@@ -14,7 +14,7 @@ sys.path.append(project_root)
 
 from fusion_stock_predictor.data.processor import DataProcessor
 from fusion_stock_predictor.models.fusion_architectures.hierarchical_fusion import (
-    HierarchicalFusion, TimeScaleAttention, HierarchicalProcessor
+    MarketAwareHierarchicalFusion, TimeScaleAttention, HierarchicalProcessor
 )
 from fusion_stock_predictor.config.config import Config
 from fusion_stock_predictor.analysis.component_analysis import ComponentAnalysis
@@ -50,6 +50,10 @@ def visualize_hierarchical_outputs(outputs: List[torch.Tensor], actual_data: tor
         # Downsample actual prices to match the current level's sequence length
         actual_prices_downsampled = actual_prices[::step_size][:len(output_np)]
         
+        # Convert returns to prices
+        last_price = actual_prices[0]  # Use first price as reference
+        predicted_prices = last_price * np.cumprod(1 + output_np)
+        
         # Plot actual prices
         plt.plot(range(0, len(actual_prices), step_size)[:len(output_np)], 
                 actual_prices_downsampled, 
@@ -57,10 +61,10 @@ def visualize_hierarchical_outputs(outputs: List[torch.Tensor], actual_data: tor
                 color='green', 
                 alpha=0.7)
         
-        # Plot model output
+        # Plot predicted prices instead of returns
         plt.plot(range(0, len(actual_prices), step_size)[:len(output_np)], 
-                output_np, 
-                label='Model Output', 
+                predicted_prices, 
+                label='Model Predictions', 
                 color='blue', 
                 alpha=0.7)
         
@@ -256,30 +260,38 @@ def test_full_hierarchical_fusion():
     config = Config(str(config_path)).config
     
     # Create model
-    model = HierarchicalFusion(config)
+    model = MarketAwareHierarchicalFusion(config)
     
     # Test data
     batch_size = 32
     seq_len = 60
     d_feat = config['model']['d_feat']
     
+    # Ensure input dimensions match model expectations
     x = torch.randn(batch_size, seq_len, d_feat)
+    # Adjust market_info to match d_feat dimension
+    market_info = torch.randn(batch_size, d_feat)
+    
+    # Print shapes for debugging
+    logger.info(f"Input x shape: {x.shape}")
+    logger.info(f"Market info shape: {market_info.shape}")
     
     # Forward pass
-    prediction, attention_info = model(x)
+    prediction, attention_info = model(x, market_info)
     
     # Test loss computation
     dummy_targets = torch.randn_like(prediction)
     losses = model.compute_losses(prediction, dummy_targets)
     
     logger.info(f"Computed losses: {losses}")
+    logger.info(f"Attention weights: {attention_info}")
     
     # Assertions
     assert prediction.shape == (batch_size, 5), \
         f"Expected prediction shape {(batch_size, 5)}, got {prediction.shape}"
     
     logger.info(f"Prediction shape: {prediction.shape}")
-    logger.info("Full HierarchicalFusion test passed")
+    logger.info("Full MarketAwareHierarchicalFusion test passed")
     return prediction, attention_info
 
 def main():

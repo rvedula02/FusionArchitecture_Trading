@@ -14,7 +14,7 @@ project_root = str(Path(__file__).parent.parent.parent)
 sys.path.append(project_root)
 
 from fusion_stock_predictor.data.processor import DataProcessor
-from fusion_stock_predictor.models.fusion_architectures.hierarchical_fusion import HierarchicalFusion
+from fusion_stock_predictor.models.fusion_architectures.hierarchical_fusion import MarketAwareHierarchicalFusion
 from fusion_stock_predictor.models.fusion_architectures.parallel_fusion import ParallelFusion
 from fusion_stock_predictor.config.config import Config
 
@@ -187,13 +187,15 @@ def compare_fusion_methods(hierarchical_model, parallel_model, test_loader):
         # Extract last known prices
         last_prices = batch_data[:, -1, ::22]  # Every 22nd feature is a price
         
+        # Extract market information from the last timestep
+        market_info = batch_data[:, -1, :]
+        
         # Get hierarchical predictions
-        h_pred_tuple = hierarchical_model(batch_data)
+        h_pred_tuple = hierarchical_model(batch_data, market_info)
         h_pred = h_pred_tuple[0] if isinstance(h_pred_tuple, tuple) else h_pred_tuple
         h_prices = convert_returns_to_prices(h_pred, last_prices)
         
         # Get parallel predictions
-        market_info = batch_data[:, -1, :]
         p_pred_tuple = parallel_model(batch_data, market_info)
         p_pred = p_pred_tuple[0] if isinstance(p_pred_tuple, tuple) else p_pred_tuple
         p_prices = convert_returns_to_prices(p_pred, last_prices)
@@ -247,10 +249,33 @@ def compare_fusion_methods(hierarchical_model, parallel_model, test_loader):
     print("MAPE: Mean Absolute Percentage Error")
     print("Directional Accuracy: Percentage of correct trend predictions")
     
-    # Add prediction plots to results
-    print("\nPrediction plots saved in results directory")
-    
     return df
+
+def visualize_market_impact(hierarchical_outputs, market_gates, save_path=None):
+    """Visualize the impact of market gating across hierarchical levels"""
+    plt.figure(figsize=(15, 10))
+    
+    n_levels = len(hierarchical_outputs)
+    
+    for level in range(n_levels):
+        plt.subplot(n_levels, 1, level + 1)
+        
+        # Plot original and gated features
+        features = hierarchical_outputs[level][0, :, 0].detach().cpu().numpy()
+        gate_value = market_gates[level].mean().item()
+        
+        plt.plot(features, label='Original Features', alpha=0.7)
+        plt.plot(features * gate_value, label=f'Gated Features (gate={gate_value:.3f})', 
+                linestyle='--', alpha=0.7)
+        
+        plt.title(f'Level {level + 1} Market Impact')
+        plt.legend()
+        plt.grid(True)
+    
+    plt.tight_layout()
+    if save_path:
+        plt.savefig(save_path)
+    plt.close()
 
 def main():
     # Configuration and model setup
@@ -262,7 +287,7 @@ def main():
     logger.info("Model configuration: %s", config['model'])
     
     # Initialize models
-    hierarchical_model = HierarchicalFusion(config)
+    hierarchical_model = MarketAwareHierarchicalFusion(config)
     parallel_model = ParallelFusion(config)
     
     # Load data
