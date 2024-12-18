@@ -1,0 +1,6 @@
+,Hierarchical,Parallel,Difference (%)
+normalized_mse,0.0118,0.0063,-46.61
+normalized_mae,0.1,0.064,-36.0
+rmse,0.1085,0.0794,-26.82
+mape,9.9961,5.8464,-41.51
+directional_accuracy,0.9844,0.9831,-0.13
