@@ -22,5 +22,3 @@ The model consists of three main components:
 2. **Market Gating**: Dynamically weights features based on market conditions using a gating mechanism
 
 3. **Cross-Time Attention**: Captures relationships across different time periods
-
-## Requirements
