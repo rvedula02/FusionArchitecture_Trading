@@ -1,6 +1,8 @@
 # Fusion Stock Predictor
 
-A deep learning framework for high-frequency stock price prediction using my attempt at a fusion architecture that combine intra-stock temporal modeling with market-guided feature selection.
+By Arnav Kolli, Tarun Venkataswamy, Rahul Vedula
+
+A deep learning research effort for high-frequency stock price prediction using fusion architecture that combine intra-stock temporal modeling with market-guided feature selection using Transformer architecture(s).
 
 ## Overview
 
